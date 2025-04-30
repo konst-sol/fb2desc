@@ -319,7 +319,7 @@ def pretty_format(filename, zipfilename, filesize, desc, format='pretty'):
             out = u'%s - %s' % (authors, title)
         #out = '%s: %s' % (filename, out)
         if options['replace']: out = replace_chars(out)
-        return out.encode(options['charset'], 'replace')
+        return out
 
     elif format == 'pretty':
         out = u'''\
@@ -352,7 +352,7 @@ Annotation   :
 %s
 ''' % annotation
         if options['replace']: out = replace_chars(out)
-        return out.encode(options['charset'], 'replace')
+        return out
 
     elif format == 'filename':
         return get_filename(authors_list, sequence_name, sequence_number, title)
@@ -373,7 +373,7 @@ def raw_format(filename, zipfilename, desc):
         if options['elements'] == [] or t:
             out += u'%s: %s\n' % (elem, data)
     if options['replace']: out = replace_chars(out)
-    return out.encode(options['charset'], 'replace')
+    return out
 
 ##----------------------------------------------------------------------
 
@@ -516,14 +516,13 @@ def fb2parse(filename, zipfilename, data):
         return
 
     if options['format'] == 'pretty':
+        # Print directly without encoding/decoding
         print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'pretty'))
     elif options['format'] == 'filename':
         print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'filename'))
     elif options['format'] == 'single':
         print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'single'))
-    elif options['format'] == '' \
-             and not options['show-cover'] \
-             and not options['show-content']:
+    elif options['format'] == 'raw':
         print(raw_format(filename, zipfilename, chandler.desc))
     if options['show-cover'] or options['show-content']:
         if options['format'] == 'raw':
@@ -663,6 +662,11 @@ must be 1, 2, 3, 4, 5, 6
     #return
 
     for raw_filename in in_files:
+        # Skip files that don't have .fb2 or .fb2.zip extension
+        if not (raw_filename.lower().endswith('.fb2') or 
+                raw_filename.lower().endswith('.fb2.zip')):
+            continue
+
         try:
             filename = os.path.abspath(raw_filename)
             filename = str(filename)  # No need to decode in Python 3
@@ -675,11 +679,6 @@ must be 1, 2, 3, 4, 5, 6
             zf = zipfile.ZipFile(raw_filename)
             for zip_filename in zf.namelist():
                 data = zf.read(zip_filename)
-                try:
-                    zip_filename = zip_filename.decode(options['zip-charset'])
-                except UnicodeDecodeError as err:
-                    print('WARNING: decode zip filename:', str(err), file=sys.stderr)
-                    zip_filename = ''
                 try:
                     fb2parse(filename, zip_filename, data)
                 except:
