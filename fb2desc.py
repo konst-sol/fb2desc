@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- mode: python; coding: utf-8; -*-
 # (c) Con Radchenko mailto:lankier@gmail.com
 #
@@ -10,7 +10,7 @@ import locale
 import getopt
 import codecs
 import zipfile
-from cStringIO import StringIO
+from io import BytesIO  # Replace cStringIO
 import xml.sax
 import shutil
 import traceback
@@ -82,11 +82,11 @@ def get_filename(authors_list, sequence_name, sequence_number, title):
         if not fl.isalpha():
             fl = full_authors[1] # FIXME
         out = os.path.join(
-            fl.lower().encode(options['charset']),
-            full_authors.lower().encode(options['charset'])[:fn_max],
-            out.encode(options['charset'])[:fn_max])
+            fl.lower(),
+            full_authors.lower()[:fn_max],
+            out[:fn_max])
     else:
-        out = out.encode(options['charset'])[:fn_max]
+        out = out[:fn_max]
 
     return out
 
@@ -212,27 +212,29 @@ def wrap_line(s):
 
 def show_cover(filename, data, content_type):
     if not data:
-        print >> sys.stderr, '%s: sorry, cover not found' % filename
+        print('%s: sorry, cover not found' % filename, file=sys.stderr)
         return
     import base64, tempfile
-    data = base64.decodestring(data)
+    data = base64.decodebytes(data.encode('ascii') if isinstance(data, str) else data)
     if content_type and content_type.startswith('image/'):
         suffix = '.'+content_type[6:]
     else:
         suffix = ''
     tmp_id, tmp_file = tempfile.mkstemp(suffix)
     try:
-        open(tmp_file, 'w').write(data)
+        with open(tmp_file, 'wb') as f:
+            f.write(data)
         os.system(options['image-viewer']+' '+tmp_file)
     finally:
         os.close(tmp_id)
         os.remove(tmp_file)
 
-def show_content(filename, titles):
+def show_content(_, titles):  # filename parameter not used
     for secttion_level, data in titles:
-        if options['replace']: data = replace_chars(data)
-        print '  '*secttion_level+data.encode(options['charset'], 'replace')
-    print
+        if options['replace']:
+            data = replace_chars(data)
+        print('  '*secttion_level+data.encode(options['charset'], 'replace'))
+    print()
 
 def rename(filename, zipfilename, desc, data):
     to = pretty_format(filename, zipfilename, len(data), desc, 'filename')
@@ -366,7 +368,7 @@ def raw_format(filename, zipfilename, desc):
     for elem, data in desc:
         if not data:
             continue
-        t = filter(elem.startswith, options['elements'])
+        t = list(filter(elem.startswith, options['elements']))
         #t = [x for x in options['elements'] if elem.startswith(x)]
         if options['elements'] == [] or t:
             out += u'%s: %s\n' % (elem, data)
@@ -474,17 +476,25 @@ class DTDHandler(xml.sax.handler.DTDHandler): pass
 ##----------------------------------------------------------------------
 
 def fb2parse(filename, zipfilename, data):
-
-    if not data.startswith('<?xml') and not data.startswith('\xef\xbb\xbf<?xml'):
-        print >> sys.stderr, \
-              'Warning: file %s is not an XML file. Skipped.' % filename
-        print repr(data[:5])
-        #shutil.copy(filename, '/home/con/t/')
-        return
+    # Convert bytes to string if needed
+    if isinstance(data, bytes):
+        if data.startswith(b'<?xml') or data.startswith(b'\xef\xbb\xbf<?xml'):
+            pass
+        else:
+            print('Warning: file {} is not an XML file. Skipped.'.format(filename),
+                  file=sys.stderr)
+            print(repr(data[:5]))
+            return
+    else:
+        if not data.startswith('<?xml') and not data.startswith('\xef\xbb\xbf<?xml'):
+            print('Warning: file {} is not an XML file. Skipped.'.format(filename),
+                  file=sys.stderr)
+            print(repr(data[:5]))
+            return
 
     chandler = ContentHandler()
     input_source = xml.sax.InputSource()
-    input_source.setByteStream(StringIO(data))
+    input_source.setByteStream(BytesIO(data.encode('utf-8') if isinstance(data, str) else data))
     xml_reader = xml.sax.make_parser()
     xml_reader.setContentHandler(chandler)
     xml_reader.setErrorHandler(ErrorHandler())
@@ -500,24 +510,24 @@ def fb2parse(filename, zipfilename, data):
     if options['show-tree']:
         for e, n in chandler.tree:
             if n > 1:
-                print '%s [%d]' % (e, n)
+                print('%s [%d]' % (e, n))
             else:
-                print e
+                print(e)
         return
 
     if options['format'] == 'pretty':
-        print pretty_format(filename, zipfilename, len(data), chandler.desc, 'pretty')
+        print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'pretty'))
     elif options['format'] == 'filename':
-        print pretty_format(filename, zipfilename, len(data), chandler.desc, 'filename')
+        print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'filename'))
     elif options['format'] == 'single':
-        print pretty_format(filename, zipfilename, len(data), chandler.desc, 'single')
+        print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'single'))
     elif options['format'] == '' \
              and not options['show-cover'] \
              and not options['show-content']:
-        print raw_format(filename, zipfilename, chandler.desc)
+        print(raw_format(filename, zipfilename, chandler.desc))
     if options['show-cover'] or options['show-content']:
         if options['format'] == 'raw':
-            print raw_format(filename, zipfilename, chandler.desc)
+            print(raw_format(filename, zipfilename, chandler.desc))
         if options['show-content']:
             show_content(filename, chandler.titles)
         if options['show-cover']:
@@ -528,7 +538,7 @@ def fb2parse(filename, zipfilename, data):
 def main():
 
     #locale.setlocale(locale.LC_ALL, '')
-    default_charset = locale.getdefaultlocale()[1]
+    default_charset = locale.getpreferredencoding()
     if default_charset:
         options['charset'] = default_charset
     prog_name = os.path.basename(sys.argv[0])
@@ -546,7 +556,7 @@ def main():
                                        'dest-dir=',
                                        'image-viewer=',
                                        'replace', 'quiet', 'help'])
-    except getopt.GetoptError, err:
+    except getopt.GetoptError as err:
         sys.exit('%s: %s\ntry %s --help for more information'
                  % (prog_name, err, prog_name))
 
@@ -575,20 +585,20 @@ Usage: %s [options] files|dir
 
     for i in optlist:
         if i[0] == '--help' or i[0] == '-h':
-            print help_msg
+            print(help_msg)
             sys.exit()
         elif i[0] in ('--charset', '-c'):
             charset = i[1]
             try:
                 codecs.lookup(charset)
-            except LookupError, err:
+            except LookupError as err:
                 sys.exit('%s: %s' % (prog_name, err))
             options['charset'] = charset
         elif i[0] in ('-z', '--zip-charset'):
             charset = i[1]
             try:
                 codecs.lookup(charset)
-            except LookupError, err:
+            except LookupError as err:
                 sys.exit('%s: %s' % (prog_name, err))
             options['zip-charset'] = charset
         elif i[0] == '--elements' or i[0] == '-e':
@@ -643,24 +653,21 @@ must be 1, 2, 3, 4, 5, 6
     in_files = []
     for fn in args:
         if os.path.isdir(fn):
-            for root, dirs, files in os.walk(fn):
+            for root, _, files in os.walk(fn):
                 for f in files:
                     in_files.append(os.path.join(root, f))
         else:
             in_files.append(fn)
 
-    #print in_files
+    #print(in_files)
     #return
 
     for raw_filename in in_files:
         try:
             filename = os.path.abspath(raw_filename)
-            filename = unicode(filename, options['charset'])
-        except UnicodeDecodeError, err:
-            #raise
-            #print >> sys.stderr, 'WARNING: decode filename:', str(err)
-            #continue
-            filename = ''               # fixme
+            filename = str(filename)  # No need to decode in Python 3
+        except UnicodeDecodeError as err:
+            filename = ''
             pass
 
         if zipfile.is_zipfile(raw_filename):
@@ -669,10 +676,9 @@ must be 1, 2, 3, 4, 5, 6
             for zip_filename in zf.namelist():
                 data = zf.read(zip_filename)
                 try:
-                    ##zip_filename = unicode(zip_filename, options['charset'])
-                    zip_filename = unicode(zip_filename, options['zip-charset'])
-                except UnicodeDecodeError, err:
-                    print >> sys.stderr, 'WARNING: decode zip filename:', str(err)
+                    zip_filename = zip_filename.decode(options['zip-charset'])
+                except UnicodeDecodeError as err:
+                    print('WARNING: decode zip filename:', str(err), file=sys.stderr)
                     zip_filename = ''
                 try:
                     fb2parse(filename, zip_filename, data)
@@ -684,15 +690,16 @@ must be 1, 2, 3, 4, 5, 6
                         continue
         else:
             options['suffix'] = '.fb2'
-            data = open(raw_filename).read()
-            if data.startswith('BZh'):
+            with open(raw_filename, 'rb') as f:
+                data = f.read()
+            if data.startswith(b'BZh'):
                 import bz2
                 options['suffix'] = '.fb2.bz2'
                 data = bz2.decompress(data)
-            elif data.startswith('\x1f\x8b'):
+            elif data.startswith(b'\x1f\x8b'):
                 import gzip
                 options['suffix'] = '.fb2.gz'
-                data = gzip.GzipFile(fileobj=StringIO(data)).read()
+                data = gzip.decompress(data)
             try:
                 fb2parse(filename, '', data)
             except:
@@ -701,4 +708,5 @@ must be 1, 2, 3, 4, 5, 6
 
 if __name__ == '__main__':
     main()
+
 
