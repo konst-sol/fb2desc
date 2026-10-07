@@ -6,118 +6,29 @@
 #
 
 import sys, os
-import locale
-import getopt
+#import locale
+import argparse
 import codecs
 import zipfile
-from io import BytesIO  # Replace cStringIO
-import xml.sax
+#from io import StringIO
+import xml.etree.ElementTree as ET
 import shutil
+import textwrap
+import re
 import traceback
 
+DEFAULT_COVER_IMAGE_VIEWER = 'feh'
 
-def get_filename(authors_list, sequence_name, sequence_number, title):
-    '''Форматы:
-    1 - "полные имена авторов, разделенные запятой - название (серия #номер)"
-    2 - тоже, но преобразованное в транслит и с заменой пробелов
-    3 - "фамилии авторов, разделенные запятой - название"
-    4 - тоже, но преобразованное в транслит и с заменой пробелов
-    5 - "первая буква автора в нижнем регистре/авторы, разделенные запятой, в нижнем регистре/авторы, разделенные запятой - название (серия #номер)"
-    6 - тоже, но преобразованное в транслит и с заменой пробелов
-
-    '''
-    format = options['fn-format']
-    out = []
-
-    authors = []
-    full_authors = []
-    for a in authors_list:
-        if a[0]:
-            authors.append(a[0])
-        fa = ' '.join(i for i in a if i)
-        if fa:
-            full_authors.append(fa)
-    authors = ', '.join(authors)
-    if not authors:
-        authors = 'unknown'
-    full_authors = ', '.join(full_authors)
-    if not full_authors:
-        full_authors = 'unknown'
-    if not title:
-        title = 'unknown'
-
-    seq = ''
-    if sequence_name:
-        if sequence_number:
-            seq = '(%s #%s)' % (sequence_name, sequence_number)
-        else:
-            seq = '(%s)' % sequence_name
-
-    if format == 3:
-        out.append(authors)
-        out.append('-')
-        out.append(title)
-        out = ' '.join(out)
-    else:
-        out.append(full_authors)
-        out.append('-')
-        out.append(title)
-        if seq:
-            out.append(seq)
-        out = ' '.join(out)
-
-    if format in (2, 4, 6):
-        out = translit(out)
-        full_authors = translit(full_authors)
-
-    #out = out.replace('/', '%').replace('\0', '').replace('?', '')
-    for c in '|\\?*<":>+[]/':           # invalid chars in VFAT
-        out = out.replace(c, '')
-        if format in (4, 5):
-            full_authors = full_authors.replace(c, '')
-
-    fn_max = 240
-    if format in (5, 6):
-        fl = full_authors[0]
-        if not fl.isalpha():
-            fl = full_authors[1] # FIXME
-        out = os.path.join(
-            fl.lower(),
-            full_authors.lower()[:fn_max],
-            out[:fn_max])
-    else:
-        out = out[:fn_max]
-
-    return out
+def print_err(*args):
+    print(*args, file=sys.stderr)
 
 ##----------------------------------------------------------------------
 
-options = {
-    'format'       : '',
-    'charset'      : 'utf-8',
-    'zip-charset'  : 'cp866',
-    'elements'     : [],
-    'replace'      : False,
-    'rename'       : False,
-    'slink'        : False,
-    'copy'         : False,
-    'fn-format'    : 2,
-    'show-cover'   : False,
-    'show-content' : False,
-    'show-tree'    : False,
-    'image-viewer' : 'xv',
-    'quiet'        : False,
-    'dest-dir'     : None,
-    #
-    'suffix'       : None,
-    }
-
-##----------------------------------------------------------------------
-
-class StopParsing(Exception):
-    pass
-
-##----------------------------------------------------------------------
+def natural_sort_key(s):
+    # Splits a string into text and numbers
+    # "a10" -> ['a', 10]
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split(r'(\d+)', s.strip())]
 
 # u'\u2013' -> '--'
 # u'\u2014' -> '---'
@@ -130,582 +41,585 @@ class StopParsing(Exception):
 # u'\u201e' -> ,,
 def replace_chars(s):
     return (s
-            .replace(u'\u2013', u'--')
-            .replace(u'\u2014', u'---')
-            .replace(u'\xa0'  , u' ')
-            .replace(u'\u2026', u'...')
-            .replace(u'\xab'  , u'<<')
-            .replace(u'\xbb'  , u'>>')
-            .replace(u'\u201c', u'``')
-            .replace(u'\u201d', u'\'\'')
-            .replace(u'\u201e', u',,')
+            .replace('\u2013', '--')
+            .replace('\u2014', '---')
+            .replace('\xa0'  , ' ')
+            .replace('\u2026', '...')
+            .replace('\xab'  , '<<')
+            .replace('\xbb'  , '>>')
+            .replace('\u201c', '``')
+            .replace('\u201d', '\'\'')
+            .replace('\u201e', ',,')
             )
 
 def translit(s):
     trans_tbl = {
-        u'\u0430': 'a', #а
-        u'\u0431': 'b', #б
-        u'\u0432': 'v', #в
-        u'\u0433': 'g', #г
-        u'\u0434': 'd', #д
-        u'\u0435': 'e', #е
-        u'\u0451': 'yo', #ё
-        u'\u0436': 'zh', #ж
-        u'\u0437': 'z', #з
-        u'\u0438': 'i', #и
-        u'\u0439': 'y', #й
-        u'\u043a': 'k', #к
-        u'\u043b': 'l', #л
-        u'\u043c': 'm', #м
-        u'\u043d': 'n', #н
-        u'\u043e': 'o', #о
-        u'\u043f': 'p', #п
-        u'\u0440': 'r', #р
-        u'\u0441': 's', #с
-        u'\u0442': 't', #т
-        u'\u0443': 'u', #у
-        u'\u0444': 'f', #ф
-        u'\u0445': 'h', #х
-        u'\u0446': 'c', #ц
-        u'\u0447': 'ch', #ч
-        u'\u0448': 'sh', #ш
-        u'\u0449': 'sh', #щ
-        u'\u044a': '', #ъ
-        u'\u044b': 'y', #ы
-        u'\u044c': '', #ь
-        u'\u044d': 'e', #э
-        u'\u044e': 'ju', #ю
-        u'\u044f': 'ya', #я
+        '\u0430': 'a', #а
+        '\u0431': 'b', #б
+        '\u0432': 'v', #в
+        '\u0433': 'g', #г
+        '\u0434': 'd', #д
+        '\u0435': 'e', #е
+        '\u0451': 'yo', #ё
+        '\u0436': 'zh', #ж
+        '\u0437': 'z', #з
+        '\u0438': 'i', #и
+        '\u0439': 'y', #й
+        '\u043a': 'k', #к
+        '\u043b': 'l', #л
+        '\u043c': 'm', #м
+        '\u043d': 'n', #н
+        '\u043e': 'o', #о
+        '\u043f': 'p', #п
+        '\u0440': 'r', #р
+        '\u0441': 's', #с
+        '\u0442': 't', #т
+        '\u0443': 'u', #у
+        '\u0444': 'f', #ф
+        '\u0445': 'h', #х
+        '\u0446': 'c', #ц
+        '\u0447': 'ch', #ч
+        '\u0448': 'sh', #ш
+        '\u0449': 'sh', #щ
+        '\u044a': '', #ъ
+        '\u044b': 'y', #ы
+        '\u044c': '', #ь
+        '\u044d': 'e', #э
+        '\u044e': 'ju', #ю
+        '\u044f': 'ya', #я
     }
-    alnum = 'abcdefghijklmnopqrstuvwxyz0123456789'
-    out = []
-    out_s = ''
-    for i in s.lower():
-        if i.isalnum():
-            if i in trans_tbl:
-                out_s += trans_tbl[i]
-            elif i in alnum:
-                out_s += i
-        else:
-            if out_s: out.append(out_s)
-            out_s = ''
-    if out_s: out.append(out_s)
-    return '_'.join(out)
+    trans_table = str.maketrans(trans_tbl)
+    s = s.lower()
+    s = s.translate(trans_table)
+    s = re.sub(r'[^a-z0-9]+', '_', s).strip('_')
+    return s
 
-def wrap_line(s):
-    if len(s) <= 70:
-        return u'  '+s
-    ss = u' '
-    sl = []
-    for word in s.split():
-        if len(ss+word) > 72:
-            sl.append(ss)
-            ss = word
-        elif ss:
-            ss += u' ' + word
-        else:
-            ss = word
-    sl.append(ss)
-    return '\n'.join(sl)
 
 ##----------------------------------------------------------------------
 
-def show_cover(filename, data, content_type):
-    if not data:
-        print('%s: sorry, cover not found' % filename, file=sys.stderr)
-        return
-    import base64, tempfile
-    data = base64.decodebytes(data.encode('ascii') if isinstance(data, str) else data)
-    if content_type and content_type.startswith('image/'):
-        suffix = '.'+content_type[6:]
-    else:
-        suffix = ''
-    tmp_id, tmp_file = tempfile.mkstemp(suffix)
-    try:
-        with open(tmp_file, 'wb') as f:
-            f.write(data)
-        os.system(options['image-viewer']+' '+tmp_file)
-    finally:
-        os.close(tmp_id)
-        os.remove(tmp_file)
+class FB2Info:
+    def __init__(self, filename, zip_filename, file_obj, first_line, file_size):
+        self.filename = filename
+        self.zip_filename = zip_filename
+        self.file_obj = file_obj
+        self.first_line = first_line
+        self.file_size = file_size
 
-def show_content(_, titles):  # filename parameter not used
-    for secttion_level, data in titles:
-        if options['replace']:
-            data = replace_chars(data)
-        print('  '*secttion_level+data.encode(options['charset'], 'replace'))
-    print()
+        self.encoding = ''
+        # b'<?xml version="1.0" encoding="UTF-8"?>\r\n'
+        matchobj = re.search(rb'encoding=["\']([^"\']+)["\']', first_line)
+        if matchobj:
+            self.encoding = matchobj.group(1).decode('utf-8')
 
-def rename(filename, zipfilename, desc, data):
-    to = pretty_format(filename, zipfilename, len(data), desc, 'filename')
-    ##filename = os.path.abspath(filename)
-    to += options['suffix']
-    if options['dest-dir']:
-        to = os.path.join(options['dest-dir'], to)
-    to = os.path.abspath(to)
-    if os.path.exists(to):
-        print >> sys.stderr, 'file %s already exists' % to
-        return
-    dir_name = os.path.dirname(to)
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name)
-    if options['slink']:
-        os.symlink(filename, to)
-        return
-    elif options['copy']:
-        shutil.copy(filename, to)
-        return
-    os.rename(filename, to)
+        #
+        self.authors_list = []
+        self.title = ''
+        self.sequence_name = ''
+        self.sequence_number = ''
+        self.authors = ''
+        self.annotation = ''
 
-def pretty_format(filename, zipfilename, filesize, desc, format='pretty'):
-    ann = []
-    title = ''
-    authors_list = []
-    # [last-name, first-name, middle-name, nick-name]
-    author_name = [None, None, None, None]
-    genres = []
-    sequence_name = ''
-    sequence_number = ''
-    for elem, data in desc:
-##         data = data.strip()
-##         if not data:
-##             continue
-        if elem.startswith('/description/title-info/annotation/'):
-            if not elem.endswith('href'):
-                ann.append(data) #wrap_line(data))
-            if elem.endswith('/p'):
-                ann.append('\n')
-        elif elem == '/description/title-info/book-title':
-            title = data
-        elif elem == '/description/title-info/author/first-name':
-            author_name[1] = data
-        elif elem == '/description/title-info/author/middle-name':
-            author_name[2] = data
-        elif elem == '/description/title-info/author/last-name':
-            author_name[0] = data
-            authors_list.append(author_name)
-            author_name = [None, None, None, None]
-        elif elem == '/description/title-info/author/nick-name':
-            #author_name[3] = data
-            if not author_name[0]:
-                author_name[0] = data
-            else:
-                author_name[3] = data
-            authors_list.append(author_name)
-            author_name = [None, None, None, None]
-        elif elem == '/description/title-info/genre':
-            genres.append(data)
-        elif elem == '/description/title-info/sequence/name':
-            sequence_name = data
-        elif elem == '/description/title-info/sequence/number':
-            sequence_number = data
-
-    ##authors_list.sort()
-    authors = u', '.join(' '.join(n for n in a if n) for a in authors_list if a)
-
-    annotation = []
-    ann = ''.join(ann).split('\n')
-    for s in ann:
-        annotation.append(wrap_line(s))
-    annotation = '\n'.join(annotation)
-
-    if format == 'single':
-        if sequence_name and sequence_number:
-            out = u'%s - %s (%s %s)' % (authors, title,
-                                        sequence_name, sequence_number)
-        elif sequence_name:
-            out = u'%s - %s (%s)' % (authors, title, sequence_name)
-        else:
-            out = u'%s - %s' % (authors, title)
-        #out = '%s: %s' % (filename, out)
-        if options['replace']: out = replace_chars(out)
-        return out
-
-    elif format == 'pretty':
-        out = u'''\
-File         : %s
-''' % filename
-        if zipfilename:
-            out += u'''\
-Zip Filename : %s
-''' % zipfilename
-        out += u'''\
-Size         : %d kb
-''' % int(filesize/1024)
-
-        out += u'''\
-Author(s)    : %s
-Title        : %s
-Genres       : %s
-''' % (authors, title, u', '.join(genres))
-        if sequence_name:
-            if sequence_number:
-                sequence = u'%s (%s)' % (sequence_name, sequence_number)
-            else:
-                sequence = sequence_name
-            out += u'''\
-Sequence     : %s
-''' % sequence
-        if annotation:
-            out += u'''\
-Annotation   :
-%s
-''' % annotation
-        if options['replace']: out = replace_chars(out)
-        return out
-
-    elif format == 'filename':
-        return get_filename(authors_list, sequence_name, sequence_number, title)
-
-
-def raw_format(filename, zipfilename, desc):
-    if options['quiet']:
-        out = u''
-    else:
-        out = u'filename: %s\n' % filename
-        if zipfilename:
-            out += u'zipfilename: %s\n' % zipfilename
-    for elem, data in desc:
-        if not data:
-            continue
-        t = list(filter(elem.startswith, options['elements']))
-        #t = [x for x in options['elements'] if elem.startswith(x)]
-        if options['elements'] == [] or t:
-            out += u'%s: %s\n' % (elem, data)
-    if options['replace']: out = replace_chars(out)
-    return out
-
-##----------------------------------------------------------------------
-
-class ContentHandler(xml.sax.handler.ContentHandler):
-    def __init__(self):
-        self.elem_stack = []
-        self.is_desc = False
-        self.is_cover = False
-        self.cur_data = ''
         self.desc = []
         self.cover = ''
         self.cover_name = ''
         self.cover_content_type = ''
-        self.is_title = False
-        self.cur_title = []
-        self.titles = []
-        self.section_level = 0
+        self.content = []
         self.tree = []
 
-    def startElement(self, name, attrs):
-        if name == 'description': self.is_desc = True
-        if name == 'section': self.section_level += 1
+        if zip_filename:
+            if options.zip_charset:
+                try:
+                    # cp437 is default encoding for zip filenames
+                    self.zip_filename = (zip_filename
+                                         .encode('cp437')
+                                         .decode(options.zip_charset))
+                except Exception as err:
+                    print_err(f'WARNING: decode zip filename: {err}')
+                    self.zip_filename = ''
 
-        if self.is_desc or options['show-tree']:
-            self.elem_stack.append(name)
-            elem = '/'+'/'.join(self.elem_stack)
-            if options['show-tree']:
-                if self.tree and self.tree[-1][0] == elem:
-                    #print self.tree[-1]
-                    self.tree[-1][1] += 1
+    def get_filename(self):
+        '''Форматы:
+        1 - "полные имена авторов, разделенные запятой - название (серия #номер)"
+        2 - то же, но преобразованное в транслит и с заменой пробелов
+        3 - "фамилии авторов, разделенные запятой - название"
+        4 - то же, но преобразованное в транслит и с заменой пробелов
+        5 - "первая буква автора в нижнем регистре/авторы, разделенные запятой, в нижнем регистре/авторы, разделенные запятой - название (серия #номер)"
+        6 - то же, но преобразованное в транслит и с заменой пробелов
+        '''
+        format = options.fn_format
+
+        authors = []
+        full_authors = []
+        for a in self.authors_list:
+            if a[0]:
+                authors.append(a[0])
+            fa = ' '.join(i for i in a if i)
+            if fa:
+                full_authors.append(fa)
+        authors = ', '.join(authors) or 'unknown'
+        full_authors = ', '.join(full_authors) or 'unknown'
+        title = self.title or 'unknown'
+
+        seq = ''
+        if self.sequence_name:
+            if self.sequence_number:
+                seq = f'{self.sequence_name} #{self.sequence_number}'
+            else:
+                seq = self.sequence_name
+
+        if format == 3:
+            out = f'{authors} - {title}'
+        else:
+            out = f'{full_authors} - {title}'
+            if seq:
+                out += f' ({seq})'
+
+        if format in (2, 4, 6):
+            out = translit(out)
+            full_authors = translit(full_authors)
+
+        #out = out.replace('/', '%').replace('\0', '').replace('?', '')
+        for c in '|\\?*<":>+[]/':           # invalid chars in VFAT
+            out = out.replace(c, '')
+            if format in (4, 5):
+                full_authors = full_authors.replace(c, '')
+
+        fn_max = 240
+        if format in (5, 6):
+            fl = full_authors[0]
+            if not fl.isalpha():
+                fl = full_authors[1] # FIXME
+            out = os.path.join(fl.lower(), full_authors.lower(), out[:fn_max])
+        else:
+            out = out[:fn_max]
+
+        return out
+
+    def format(self, format='pretty'):
+        ann = []
+        title = ''
+        authors_list = []
+        # [last-name, first-name, middle-name, nick-name]
+        author_name = [None, None, None, None]
+        genres = []
+        sequence_name = ''
+        sequence_number = ''
+        for elem, data in self.desc:
+            # data = data.strip()
+            # if not data:
+            #     continue
+            if elem.startswith('/description/title-info/annotation/'):
+                if not elem.endswith('href'):
+                    ann.append(data)
+                if elem.endswith('/p'):
+                    ann.append('\n')
+            elif elem == '/description/title-info/book-title':
+                title = data
+            elif elem == '/description/title-info/author/first-name':
+                author_name[1] = data
+            elif elem == '/description/title-info/author/middle-name':
+                author_name[2] = data
+            elif elem == '/description/title-info/author/last-name':
+                author_name[0] = data
+                authors_list.append(author_name)
+                author_name = [None, None, None, None]
+            elif elem == '/description/title-info/author/nick-name':
+                #author_name[3] = data
+                if not author_name[0]:
+                    author_name[0] = data
                 else:
-                #if not elem.endswith('/p') and not elem.endswith('/v'):
-                    self.tree.append([elem, 1])
-            for atr in attrs.getNames():
-                #t = (elem+u'/'+atr, attrs.getValue(atr))
-                self.desc.append((elem+u'/'+atr, attrs.getValue(atr)))
-                if elem == '/description/title-info/coverpage/image' and \
-                   atr.endswith('href'):
-                    self.cover_name = attrs.getValue(atr)[1:]
+                    author_name[3] = data
+                authors_list.append(author_name)
+                author_name = [None, None, None, None]
+            elif elem == '/description/title-info/genre':
+                genres.append(data)
+            elif elem == '/description/title-info/sequence/name':
+                sequence_name = data
+            elif elem == '/description/title-info/sequence/number':
+                sequence_number = data
+
+        self.authors_list = authors_list
+        self.title = title
+        self.sequence_name = sequence_name
+        self.sequence_number = sequence_number
+
+        ##authors_list.sort()
+        authors = ', '.join(' '.join(n for n in a if n) for a in authors_list if a)
+        self.authors = authors
+
+        annotation = []
+        ann = ''.join(ann).split('\n')
+        for s in ann:
+            s = '\n'.join(textwrap.wrap(s, width=72, break_long_words=False,
+                                        initial_indent='  '))
+            annotation.append(s)
+        annotation = '\n'.join(annotation)
+        if annotation:
+            annotation = '\n' + annotation.rstrip()
+        self.annotation = annotation
 
 
-        self.is_cover = False
-        if options['show-cover'] and name == 'binary':
-            content_type = ''
-            for atr in attrs.getNames():
-                if atr == 'id' and attrs.getValue(atr) == self.cover_name:
-                    self.is_cover = True
-                elif atr == 'content-type':
-                    content_type = attrs.getValue(atr)
-            if self.is_cover and content_type:
-                self.cover_content_type = content_type
-
-        if options['show-content'] and name == 'title':
-            self.is_title = True
-            self.cur_title = []
-
-
-    def endElement(self, name):
-        if self.is_desc and self.cur_data:
-            elem_name = '/'+'/'.join(self.elem_stack)
-            self.desc.append((elem_name, self.cur_data.strip()))
-            self.cur_data = ''
-
-        if self.is_desc or options['show-tree']:
-            del self.elem_stack[-1]
-
-        if name == 'description':
-            if not options['show-cover'] \
-                   and not options['show-content'] \
-                   and not options['show-tree']:
-                raise StopParsing
+        if format == 'single':
+            if sequence_name and sequence_number:
+                out = f'{authors} - {title} ({sequence_name} {sequence_number})'
+            elif sequence_name:
+                out = f'{authors} - {title} ({sequence_name})'
             else:
-                self.is_desc = False
+                out = f'{authors} - {title}'
+            #out = '%s: %s' % (filename, out)
+            if options.replace: out = replace_chars(out)
+            return out
 
-        if options['show-content'] and name == 'title':
-            self.is_title = False
-            self.titles.append((self.section_level, ' '.join(self.cur_title)))
+        elif format == 'pretty':
+            def add_col(name, value):
+                if value:
+                    out.append(f'{name:<13}: {value}')
+            out = []
+            add_col('File', self.filename)
+            add_col('Zip Filename', self.zip_filename)
+            add_col('Size', f'{self.file_size//1024} kb')
+            add_col('Encoding', self.encoding)
 
-        self.cur_data = ''
-        if name == 'section': self.section_level -= 1
+            add_col('Author(s)', authors)
+            add_col('Title', title)
+            add_col('Genres', ', '.join(genres))
+            if sequence_name:
+                if sequence_number:
+                    sequence = f'{sequence_name} ({sequence_number})'
+                else:
+                    sequence = sequence_name
+                add_col('Sequence', sequence)
+            add_col('Annotation', annotation)
+            out.append('')
+            out = '\n'.join(out)
+            if options.replace: out = replace_chars(out)
+            return out
 
-    def characters(self, data):
-        if self.is_desc:
-            #data = data.strip()
-            data = data.replace('\n', ' ')
-            if self.cur_data:
-                self.cur_data += data
-            else:
-                self.cur_data = data
-        if options['show-cover'] and self.is_cover:
-            self.cover += data
-        if options['show-content'] and self.is_title:
-            data = data.strip()
-            if data: self.cur_title.append(data)
+        elif format == 'filename':
+            return self.get_filename()
 
-class ErrorHandler(xml.sax.handler.ErrorHandler): pass
-class EntityResolver(xml.sax.handler.EntityResolver): pass
-class DTDHandler(xml.sax.handler.DTDHandler): pass
+    def raw_format(self):
+        if options.quiet:
+            out = ''
+        else:
+            out = f'filename: {self.filename}\n'
+            if self.zip_filename:
+                out += f'zipfilename: {self.zip_filename}\n'
+        for elem, data in self.desc:
+            if not data:
+                continue
+            t = list(filter(elem.startswith, options.elements))
+            #t = [x for x in options.elements if elem.startswith(x)]
+            if options.elements == [] or t:
+                out += f'{elem}: {data}\n'
+        if options.replace: out = replace_chars(out)
+        return out
+
+    def show_cover(self):
+        if not self.cover:
+            print_err(f'{self.filename}: sorry, cover not found')
+            return
+        import base64, tempfile
+        data = base64.b64decode(self.cover)
+        if self.cover_content_type and self.cover_content_type.startswith('image/'):
+            suffix = '.'+self.cover_content_type[6:]
+        else:
+            suffix = ''
+        tmp_id, tmp_file = tempfile.mkstemp(suffix)
+        try:
+            open(tmp_file, 'wb').write(data)
+            os.system(options.image_viewer+' '+tmp_file)
+        finally:
+            os.close(tmp_id)
+            os.remove(tmp_file)
+
+    def show_content(self):
+        for secttion_level, data in self.content:
+            if options.replace: data = replace_chars(data)
+            print('  '*secttion_level+data)
+        print()
+
+    def rename(self):
+        to = self.format('filename')
+        to += options.suffix
+        if options.dest_dir:
+            to = os.path.join(options.dest_dir, to)
+        to = os.path.abspath(to)
+        if os.path.exists(to):
+            print_err(f'file {to} already exists')
+            return
+        if not options.quiet:
+            action = 'symlink' if options.slink else 'copy' if options.copy else 'rename'
+            print(f'{action}: {self.filename} -> {to}')
+        dir_name = os.path.dirname(to)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+        if options.slink:
+            os.symlink(self.filename, to)
+            return
+        elif options.copy:
+            shutil.copy(self.filename, to)
+            return
+        os.rename(self.filename, to)
+
+    def parse(self):
+        if not self.first_line.startswith((b'<?xml', b'\xef\xbb\xbf<?xml')):
+            print_err(f'Warning: file {self.filename} is not an XML file. Skipped.')
+            print(self.first_line[:5])
+            #shutil.copy(filename, '/home/con/t/')
+            return
+
+        self.parse_xml()
+
+        if options.rename:
+            self.rename()
+            return
+        if options.show_tree:
+            for e, n in self.tree:
+                if n > 1:
+                    print(f'{e} [{n}]')
+                else:
+                    print(e)
+            return
+
+        if options.format == 'pretty':
+            print(self.format('pretty'))
+        elif options.format == 'filename':
+            print(self.format('filename'))
+        elif options.format == 'single':
+            print(self.format('single'))
+        elif (options.format == ''
+              and not options.show_cover
+              and not options.show_content):
+            print(self.raw_format())
+        if options.show_cover or options.show_content:
+            if options.format == 'raw':
+                print(self.raw_format())
+            if options.show_content:
+                self.show_content()
+            if options.show_cover:
+                self.show_cover()
+
+    def parse_xml(self):
+        elem_stack = []
+        is_desc = False
+        is_title = False
+        cur_title = []
+        section_level = 0
+
+        context = ET.iterparse(self.file_obj, events=('start', 'end'))
+        for event, elem in context:
+            if elem.tag.startswith('{'):
+                elem.tag = elem.tag.split('}', 1)[1]
+            if event == 'start':
+                if elem.tag == 'description': is_desc = True
+                if elem.tag == 'section': section_level += 1
+
+                if is_desc or options.show_tree:
+                    elem_stack.append(elem.tag)
+                    elem_name = f'/{"/".join(elem_stack)}'
+                    if options.show_tree:
+                        if self.tree and self.tree[-1][0] == elem_name:
+                            self.tree[-1][1] += 1
+                        else: #if not elem.endswith('/p') and not elem.endswith('/v'):
+                            self.tree.append([elem_name, 1])
+                    for name, value in elem.attrib.items():
+                        self.desc.append((f'{elem_name}/{name}', value))
+                        if (elem_name == '/description/title-info/coverpage/image'
+                            and name.endswith('href')):
+                            self.cover_name = elem.attrib[name][1:]
+
+                if options.show_content and elem.tag == 'title':
+                    is_title = True
+                    cur_title = []
+
+
+            elif event == 'end':
+                text = ''
+                if elem.text:
+                    text = ' '.join(elem.text.strip().split())
+                if is_desc and text:
+                    elem_name = '/'+'/'.join(elem_stack)
+                    self.desc.append((elem_name, text))
+
+                if is_desc or options.show_tree:
+                    del elem_stack[-1]
+
+                if options.show_content:
+                    if elem.tag == 'title':
+                        is_title = False
+                        self.content.append((section_level, ' '.join(cur_title)))
+                    elif is_title:
+                        if text: cur_title.append(text)
+
+                if (options.show_cover
+                    and elem.tag == 'binary'
+                    and elem.attrib.get('id') == self.cover_name):
+                    self.cover = elem.text
+                    self.cover_content_type = elem.attrib.get('content-type', '')
+
+                if elem.tag == 'section': section_level -= 1
+                if elem.tag == 'description':
+                    if (not options.show_cover
+                        and not options.show_content
+                        and not options.show_tree):
+                        break
+                    else:
+                        is_desc = False
+
+
 
 ##----------------------------------------------------------------------
 
-def fb2parse(filename, zipfilename, data):
-    # Convert bytes to string if needed
-    if isinstance(data, bytes):
-        if data.startswith(b'<?xml') or data.startswith(b'\xef\xbb\xbf<?xml'):
-            pass
-        else:
-            print('Warning: file {} is not an XML file. Skipped.'.format(filename),
-                  file=sys.stderr)
-            print(repr(data[:5]))
-            return
+class CustomArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print_err(f'{self.prog}: error: {message}')
+        print_err("Try '--help' for more information.")
+        sys.exit(2)
+
+def parse_args():
+    global options
+
+    parser = CustomArgumentParser(
+        description='show description of FB2 file(s)')
+
+    parser.add_argument('file', nargs='+', help='files or dirs')
+
+    parser.add_argument('-w', '--raw-format', action='store_true',
+                        help='output in raw format')
+    parser.add_argument('-p', '--pretty', action='store_true',
+                        help='output in pretty format')
+    parser.add_argument('-l', '--single', action='store_true',
+                        help='output in single format')
+    parser.add_argument('--output', dest='format',
+                        choices=['raw', 'pretty', 'single', 'filename'],
+                        default='', help='output format')
+    parser.add_argument('-o', '--contents', dest='show_content', action='store_true',
+                        help='show contents')
+    parser.add_argument('-t', '--tree', dest='show_tree', action='store_true',
+                        help='show XML tree')
+    parser.add_argument('-v', '--cover', dest='show_cover', action='store_true',
+                        help='show cover')
+    parser.add_argument('-z', '--zip-charset',
+                        help='use <ZIP_CHARSET> for zip filenames')
+    parser.add_argument('-r', '--replace', action='store_true',
+                        help='replace any chars')
+    parser.add_argument('-e', '--elements', default=[],
+                        help='show only this elements (comma separeted)')
+    parser.add_argument('-R', '--rename', action='store_true', help='rename mode')
+    parser.add_argument('-S', '--slink', action='store_true', help='create softlinks')
+    parser.add_argument('-C', '--copy', action='store_true', help='copy files')
+    parser.add_argument('--fn-format', type=int, choices=(1, 2, 3, 4, 5, 6), default=2,
+                        help='rename pattern; default: %(default)s')
+    parser.add_argument('--dest-dir', help='destination dir')
+    parser.add_argument('--image-viewer', default=DEFAULT_COVER_IMAGE_VIEWER,
+                        help='cover image viewer')
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help='suppress output filename')
+
+    options = parser.parse_args()
+
+    if options.raw_format:
+        options.format = 'raw'
+    if options.single:
+        options.format = 'single'
+    if options.pretty:
+        options.format = 'pretty'
+    if options.elements:
+        options.elements = options.elements.split(',')
+    if options.slink or options.copy:
+        options.rename = True
+
+    if options.zip_charset:
+        try:
+            codecs.lookup(options.zip_charset)
+        except LookupError as err:
+            sys.exit(f'{parser.prog}: error: {err}')
+
+    options.suffix = None
+
+##----------------------------------------------------------------------
+
+def yield_fb2(raw_filename):
+    filename = os.path.abspath(raw_filename)
+    if zipfile.is_zipfile(raw_filename):
+        options.suffix = '.fb2.zip'
+        with zipfile.ZipFile(raw_filename) as archive:
+            for file_info in archive.infolist():
+                if file_info.is_dir():
+                    continue
+                fileobj = archive.open(file_info)
+                first_line = fileobj.readline()
+                fileobj.seek(0)
+                yield (filename, file_info.filename, fileobj,
+                       first_line, file_info.file_size)
+                if options.rename:
+                    return
     else:
-        if not data.startswith('<?xml') and not data.startswith('\xef\xbb\xbf<?xml'):
-            print('Warning: file {} is not an XML file. Skipped.'.format(filename),
-                  file=sys.stderr)
-            print(repr(data[:5]))
-            return
+        fileobj = open(raw_filename, 'rb')
+        first_line = fileobj.readline()
+        if first_line.startswith(b'7z\xbc\xaf\x27\x1c'):
+            fileobj.close()
+            try:
+                import py7zr
+            except ModuleNotFoundError:
+                print_err('ModuleNotFoundError: py7zr')
+                return
+            options.suffix ='.fb2.7z'
+            with py7zr.SevenZipFile(raw_filename) as archive:
+                info_list = {}
+                for file_info in archive.list():
+                    if file_info.is_directory: continue
+                    info_list[file_info.filename] = file_info.uncompressed
+                for zip_filename, fileobj in archive.readall().items():
+                    #if filename.endswith('/'): continue
+                    first_line = fileobj.readline()
+                    fileobj.seek(0)
+                    file_size = info_list[zip_filename]
+                    yield (filename, zip_filename, fileobj, first_line, file_size)
+                    if options.rename:
+                        return
 
-    chandler = ContentHandler()
-    input_source = xml.sax.InputSource()
-    input_source.setByteStream(BytesIO(data.encode('utf-8') if isinstance(data, str) else data))
-    xml_reader = xml.sax.make_parser()
-    xml_reader.setContentHandler(chandler)
-    xml_reader.setErrorHandler(ErrorHandler())
-    xml_reader.setEntityResolver(EntityResolver())
-    xml_reader.setDTDHandler(DTDHandler())
-    try:
-        xml_reader.parse(input_source)
-    except StopParsing:
-        pass
-    if options['rename']:
-        rename(filename, zipfilename, chandler.desc, data)
-        return
-    if options['show-tree']:
-        for e, n in chandler.tree:
-            if n > 1:
-                print('%s [%d]' % (e, n))
-            else:
-                print(e)
-        return
-
-    if options['format'] == 'pretty':
-        # Print directly without encoding/decoding
-        print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'pretty'))
-    elif options['format'] == 'filename':
-        print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'filename'))
-    elif options['format'] == 'single':
-        print(pretty_format(filename, zipfilename, len(data), chandler.desc, 'single'))
-    elif options['format'] == 'raw':
-        print(raw_format(filename, zipfilename, chandler.desc))
-    if options['show-cover'] or options['show-content']:
-        if options['format'] == 'raw':
-            print(raw_format(filename, zipfilename, chandler.desc))
-        if options['show-content']:
-            show_content(filename, chandler.titles)
-        if options['show-cover']:
-            show_cover(filename, chandler.cover, chandler.cover_content_type)
+        else:
+            options.suffix = '.fb2'
+            fileobj.seek(0)
+            yield (filename, None, fileobj, first_line, os.path.getsize(filename))
 
 ##----------------------------------------------------------------------
 
 def main():
-
-    #locale.setlocale(locale.LC_ALL, '')
-    default_charset = locale.getpreferredencoding()
-    if default_charset:
-        options['charset'] = default_charset
-    prog_name = os.path.basename(sys.argv[0])
-
-    try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'c:Ce:f:hlopqrRStvwz:',
-                                      ['raw', 'pretty',
-                                       'single',
-                                       'output=',
-                                       'rename', 'copy', 'slink',
-                                       'fn-format=',
-                                       'cover', 'contents', 'tree',
-                                       'charset=', 'zip-charset=',
-                                       'elements=',
-                                       'dest-dir=',
-                                       'image-viewer=',
-                                       'replace', 'quiet', 'help'])
-    except getopt.GetoptError as err:
-        sys.exit('%s: %s\ntry %s --help for more information'
-                 % (prog_name, err, prog_name))
-
-    help_msg = '''fb2desc -- show description of FB2 file(s)
-Usage: %s [options] files|dir
-  -w  --raw-format           output in raw format (default)
-  -p  --pretty               output in pretty format
-  -l  --single               output in single format
-      --output format        output in format (raw, pretty, single, filename)
-  -o  --contents             show contents
-  -t  --tree
-  -v  --cover                show cover
-  -c  --charset <charset>    specify output charset (default: %s)
-  -z  --zip-charset <charset>
-  -r  --replace              replace any chars
-  -e  --elements <elements>  show only this elements (comma separeted)
-  -R  --rename               rename mode
-  -S  --slink                create softlinks
-  -C  --copy                 copy files
-      --fn-format <format>   rename pattern (1, 2, 3, 4, 5, 6)
-      --dest-dir
-      --image-viewer
-  -q  --quiet                suppress output filename
-  -h  --help                 display this help''' \
-    % (prog_name, default_charset)
-
-    for i in optlist:
-        if i[0] == '--help' or i[0] == '-h':
-            print(help_msg)
-            sys.exit()
-        elif i[0] in ('--charset', '-c'):
-            charset = i[1]
-            try:
-                codecs.lookup(charset)
-            except LookupError as err:
-                sys.exit('%s: %s' % (prog_name, err))
-            options['charset'] = charset
-        elif i[0] in ('-z', '--zip-charset'):
-            charset = i[1]
-            try:
-                codecs.lookup(charset)
-            except LookupError as err:
-                sys.exit('%s: %s' % (prog_name, err))
-            options['zip-charset'] = charset
-        elif i[0] == '--elements' or i[0] == '-e':
-            options['elements'] = i[1].split(',')
-        elif i[0] == '--output':
-            f = i[1]
-            if f not in ('raw', 'pretty', 'single', 'filename'):
-                sys.exit('''bad option for --output
-must be raw, pretty, single, filename
-''')
-            options['format'] = f
-        elif i[0] == '--raw' or i[0] == '-w':
-            options['format'] = 'raw'
-        elif i[0] == '--single' or i[0] == '-l':
-            options['format'] = 'single'
-        elif i[0] == '--pretty-format' or i[0] == '-p':
-            options['format'] = 'pretty'
-        elif i[0] == '--replace' or i[0] == '-r':
-            options['replace'] = True
-        elif i[0] == '--rename' or i[0] == '-R':
-            options['rename'] = True
-        elif i[0] == '--slink' or i[0] == '-S':
-            options['rename'] = True
-            options['slink'] = True
-        elif i[0] == '--copy' or i[0] == '-C':
-            options['rename'] = True
-            options['copy'] = True
-        elif i[0] in ('--fn-format', '-f'):
-            f = i[1]
-            if f not in ('1', '2', '3', '4', '5', '6'):
-                sys.exit('''bad option for --fn-format
-must be 1, 2, 3, 4, 5, 6
-''')
-            options['fn-format'] = int(f)
-        elif i[0] == '--contents' or i[0] == '-o':
-            options['show-content'] = True
-        elif i[0] == '--cover' or i[0] == '-v':
-            options['show-cover'] = True
-        elif i[0] == '--tree' or i[0] == '-t':
-            options['show-tree'] = True
-        elif i[0] == '--quiet' or i[0] == '-q':
-            options['quiet'] = True
-        elif i[0] == '--dest-dir':
-            options['dest-dir'] = i[1]
-        elif i[0] == '--image-viewer':
-            options['image-viewer'] = i[1]
-
-    if len(args) == 0:
-        sys.exit('%s: missing filename\ntry %s --help for more information'
-                 % (prog_name, prog_name))
+    parse_args()
+    #print(options)
 
     in_files = []
-    for fn in args:
+    for fn in options.file:
         if os.path.isdir(fn):
-            for root, _, files in os.walk(fn):
+            for root, dirs, files in os.walk(fn):
                 for f in files:
                     in_files.append(os.path.join(root, f))
         else:
             in_files.append(fn)
 
+    in_files.sort(key=natural_sort_key)
     #print(in_files)
-    #return
 
-    for raw_filename in in_files:
-        # Skip files that don't have .fb2 or .fb2.zip extension
-        if not (raw_filename.lower().endswith('.fb2') or 
-                raw_filename.lower().endswith('.fb2.zip')):
+    for filename in in_files:
+        if not os.path.isfile(filename):
+            print_err(f"ERROR: file not found: '{filename}'")
             continue
 
         try:
-            filename = os.path.abspath(raw_filename)
-            filename = str(filename)  # No need to decode in Python 3
-        except UnicodeDecodeError as err:
-            filename = ''
-            pass
-
-        if zipfile.is_zipfile(raw_filename):
-            options['suffix'] = '.fb2.zip'
-            zf = zipfile.ZipFile(raw_filename)
-            for zip_filename in zf.namelist():
-                data = zf.read(zip_filename)
-                try:
-                    fb2parse(filename, zip_filename, data)
-                except:
-                    traceback.print_exc()
-                    ##shutil.copy(raw_filename, '/home/con/t/')
-                else:
-                    if options['rename']:
-                        continue
-        else:
-            options['suffix'] = '.fb2'
-            with open(raw_filename, 'rb') as f:
-                data = f.read()
-            if data.startswith(b'BZh'):
-                import bz2
-                options['suffix'] = '.fb2.bz2'
-                data = bz2.decompress(data)
-            elif data.startswith(b'\x1f\x8b'):
-                import gzip
-                options['suffix'] = '.fb2.gz'
-                data = gzip.decompress(data)
-            try:
-                fb2parse(filename, '', data)
-            except:
-                traceback.print_exc()
+            for info in yield_fb2(filename):
+                fb2 = FB2Info(*info)
+                fb2.parse()
+        except Exception:
+            print_err('>>', filename)
+            traceback.print_exc()
+            ##shutil.copy(raw_filename, '/home/con/t/')
 
 
 if __name__ == '__main__':
     main()
 
-
+# end
