@@ -126,17 +126,6 @@ class FB2Info:
         self.content = []
         self.tree = []
 
-        if zip_filename:
-            if options.zip_charset:
-                try:
-                    # cp437 is default encoding for zip filenames
-                    self.zip_filename = (zip_filename
-                                         .encode('cp437')
-                                         .decode(options.zip_charset))
-                except Exception as err:
-                    print_err(f'WARNING: decode zip filename: {err}')
-                    self.zip_filename = ''
-
     def get_filename(self):
         '''Форматы:
         1 - "полные имена авторов, разделенные запятой - название (серия #номер)"
@@ -547,7 +536,7 @@ def yield_fb2(raw_filename):
     filename = os.path.abspath(raw_filename)
     if zipfile.is_zipfile(raw_filename):
         options.suffix = '.fb2.zip'
-        with zipfile.ZipFile(raw_filename) as archive:
+        with zipfile.ZipFile(raw_filename, metadata_encoding=options.zip_charset) as archive:
             for file_info in archive.infolist():
                 if file_info.is_dir():
                     continue
