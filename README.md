@@ -119,6 +119,8 @@ You can specify a renaming template:
 
 Template #2 is used by default.
 
+If the ZIP archive contains multiple files, renaming will be based on the first one.
+
 ### Renaming Template Example
 
 ```bash
