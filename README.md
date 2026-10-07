@@ -52,6 +52,7 @@ $ fb2desc.py -pov example.fb2
 
 File         : /home/user/example.fb2
 Size         : 98 kb
+Encoding     : UTF-8
 Author(s)    : Толстой Лев Николаевич
 Title        : Война и мир
 Genres       : history_russia, romance_historical, literature_classics, literature_history, literature_war, literature_rus_classsic, computers
