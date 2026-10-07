@@ -94,7 +94,8 @@ class FB2Info:
         self.zip_filename = zip_filename
         self.file_obj = file_obj
         if options.charset:
-            self.file_obj = TextIOWrapper(file_obj, encoding=options.charset)
+            self.file_obj = TextIOWrapper(file_obj, encoding=options.charset,
+                                          errors='ignore')
         self.first_line = first_line
         self.file_size = file_size
 
