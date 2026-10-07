@@ -11,7 +11,7 @@ A command-line utility for working with FB2 (FictionBook) files.
 - `-o, --contents` - Show table of contents
 - `-t, --tree` - Show XML tree
 - `-v, --cover` - Show cover
-- `-c, --charset <charset>` - Output encoding
+- `-c, --charset <charset>` - Encoding for FB2 files
 - `-z, --zip-charset <charset>` - Encoding for filenames in ZIP archives
 - `-r, --replace` - Replace certain characters (quotation marks, etc.)
 - `-e, --elements <elements>` - Show only specified elements
