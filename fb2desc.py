@@ -193,7 +193,7 @@ class FB2Info:
             if elem.startswith('/description/title-info/annotation/'):
                 if not elem.endswith('href'):
                     ann.append(data)
-                if elem.endswith('/p'):
+                if elem.endswith(('/p', '/v', '/text-author')):
                     ann.append('\n')
             elif elem == '/description/title-info/book-title':
                 title = data
