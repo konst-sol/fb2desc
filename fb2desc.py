@@ -387,13 +387,26 @@ class FB2Info:
         is_desc = False
         is_title = False
         cur_title = []
+        is_par = False
+        cur_par = ''
         section_level = 0
 
         context = ET.iterparse(self.file_obj, events=('start', 'end'))
+        if not next(context)[1].tag.endswith('FictionBook'):
+            raise ValueError('not FB2')
+
         for event, elem in context:
             if elem.tag.startswith('{'):
                 elem.tag = elem.tag.split('}', 1)[1]
             if event == 'start':
+                if is_par:
+                    continue
+                if elem.tag == 'p':
+                    is_par = True
+                    cur_par = ''
+                    if elem.text and elem.text.strip():
+                        cur_par = elem.text
+
                 if elem.tag == 'description': is_desc = True
                 if elem.tag == 'section': section_level += 1
 
@@ -406,10 +419,12 @@ class FB2Info:
                         else: #if not elem.endswith('/p') and not elem.endswith('/v'):
                             self.tree.append([elem_name, 1])
                     for name, value in elem.attrib.items():
+                        if name.startswith('{'):
+                            name = name.split('}', 1)[1]
                         self.desc.append((f'{elem_name}/{name}', value))
                         if (elem_name == '/description/title-info/coverpage/image'
                             and name.endswith('href')):
-                            self.cover_name = elem.attrib[name][1:]
+                            self.cover_name = value[1:]
 
                 if options.show_content and elem.tag == 'title':
                     is_title = True
@@ -418,11 +433,29 @@ class FB2Info:
 
             elif event == 'end':
                 text = ''
-                if elem.text:
-                    text = ' '.join(elem.text.strip().split())
-                if is_desc and text:
+                if elem.text and elem.text.strip():
+                    text = elem.text
+                tail = ''
+                if elem.tail and elem.tail.strip():
+                    tail = elem.tail
+                if elem.tag == 'p':
+                    is_par = False
+                    if tail:
+                        cur_par += tail
+                    text = ' '.join(cur_par.split())
                     elem_name = '/'+'/'.join(elem_stack)
-                    self.desc.append((elem_name, text))
+                elif is_par:
+                    cur_par += text
+                    cur_par += tail
+                    continue
+
+                if is_desc:
+                    if text:
+                        elem_name = '/'+'/'.join(elem_stack)
+                        self.desc.append((elem_name, text))
+                    if tail:
+                        elem_name = '/'+'/'.join(elem_stack[:-1])
+                        self.desc.append((elem_name, tail))
 
                 if is_desc or options.show_tree:
                     del elem_stack[-1]
@@ -433,6 +466,7 @@ class FB2Info:
                         self.content.append((section_level, ' '.join(cur_title)))
                     elif is_title:
                         if text: cur_title.append(text)
+                        if tail: cur_title.append(tail)
 
                 if (options.show_cover
                     and elem.tag == 'binary'
@@ -488,7 +522,7 @@ def parse_args():
     parser.add_argument('-z', '--zip-charset', metavar='CHARSET',
                         help='use <CHARSET> for zipped filenames')
     parser.add_argument('-r', '--replace', action='store_true',
-                        help='replace any chars')
+                        help='replace chars for 8-bit encodings')
     parser.add_argument('-e', '--elements', default=[],
                         help='show only this elements (comma separeted)')
     parser.add_argument('-R', '--rename', action='store_true', help='rename mode')
