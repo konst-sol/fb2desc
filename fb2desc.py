@@ -10,7 +10,7 @@ import sys, os
 import argparse
 import codecs
 import zipfile
-#from io import StringIO
+from io import TextIOWrapper
 import xml.etree.ElementTree as ET
 import shutil
 import textwrap
@@ -102,6 +102,8 @@ class FB2Info:
         self.filename = filename
         self.zip_filename = zip_filename
         self.file_obj = file_obj
+        if options.charset:
+            self.file_obj = TextIOWrapper(file_obj, encoding=options.charset)
         self.first_line = first_line
         self.file_size = file_size
 
@@ -490,6 +492,8 @@ def parse_args():
                         help='show XML tree')
     parser.add_argument('-v', '--cover', dest='show_cover', action='store_true',
                         help='show cover')
+    parser.add_argument('-c', '--charset',
+                        help='use <CHARSET> for FB2 files')
     parser.add_argument('-z', '--zip-charset', metavar='CHARSET',
                         help='use <CHARSET> for zipped filenames')
     parser.add_argument('-r', '--replace', action='store_true',
@@ -522,6 +526,11 @@ def parse_args():
     if options.slink or options.copy:
         options.rename = True
 
+    if options.charset:
+        try:
+            codecs.lookup(options.charset)
+        except LookupError as err:
+            sys.exit(f'{parser.prog}: error: {err}')
     if options.zip_charset:
         try:
             codecs.lookup(options.zip_charset)
