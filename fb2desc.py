@@ -496,27 +496,29 @@ def parse_args():
                         choices=['raw', 'pretty', 'single', 'filename'],
                         default='', help='output format')
     parser.add_argument('-o', '--contents', dest='show_content', action='store_true',
-                        help='show contents')
+                        help='show table of contents')
     parser.add_argument('-t', '--tree', dest='show_tree', action='store_true',
                         help='show XML tree')
     parser.add_argument('-v', '--cover', dest='show_cover', action='store_true',
                         help='show cover')
-    parser.add_argument('-z', '--zip-charset',
-                        help='use <ZIP_CHARSET> for zip filenames')
+    parser.add_argument('-z', '--zip-charset', metavar='CHARSET',
+                        help='use <CHARSET> for zipped filenames')
     parser.add_argument('-r', '--replace', action='store_true',
                         help='replace any chars')
     parser.add_argument('-e', '--elements', default=[],
                         help='show only this elements (comma separeted)')
     parser.add_argument('-R', '--rename', action='store_true', help='rename mode')
-    parser.add_argument('-S', '--slink', action='store_true', help='create softlinks')
-    parser.add_argument('-C', '--copy', action='store_true', help='copy files')
+    parser.add_argument('-S', '--slink', action='store_true',
+                        help='create softlinks instead of renaming')
+    parser.add_argument('-C', '--copy', action='store_true',
+                        help='copy files instead of renaming')
     parser.add_argument('--fn-format', type=int, choices=(1, 2, 3, 4, 5, 6), default=2,
                         help='rename pattern; default: %(default)s')
-    parser.add_argument('--dest-dir', help='destination dir')
+    parser.add_argument('--dest-dir', help='destination dir for renamed files')
     parser.add_argument('--image-viewer', default=DEFAULT_COVER_IMAGE_VIEWER,
                         help='cover image viewer')
     parser.add_argument('-q', '--quiet', action='store_true',
-                        help='suppress output filename')
+                        help='suppress output filename in raw format')
 
     options = parser.parse_args()
 
