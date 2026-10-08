@@ -427,7 +427,7 @@ class FB2Info:
                             and name.endswith('href')):
                             self.cover_name = value[1:]
 
-                if options.show_content and elem.tag == 'title':
+                if options.show_content and elem.tag == 'title' and not is_desc:
                     is_title = True
                     cur_title = []
 
