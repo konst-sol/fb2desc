@@ -346,13 +346,15 @@ class FB2Info:
         os.rename(self.filename, to)
 
     def parse(self):
-        if not self.first_line.startswith((b'<?xml', b'\xef\xbb\xbf<?xml')):
-            print_err(f'Warning: file {self.filename} is not an XML file. Skipped.')
-            print(self.first_line[:5])
-            #shutil.copy(filename, '/home/con/t/')
+        try:
+            self.parse_xml()
+        except (ValueError, ET.ParseError) as err:
+            line, column = err.position
+            if line == 1: # and column < 100:
+                print_err(f'{self.filename} is not an XML file')
+            else:
+                print_err(f'{self.filename} XML parsing error: {err}')
             return
-
-        self.parse_xml()
 
         if options.rename:
             self.rename()
@@ -413,7 +415,7 @@ class FB2Info:
 
                 if is_desc or options.show_tree:
                     elem_stack.append(elem.tag)
-                    elem_name = f'/{"/".join(elem_stack)}'
+                    elem_name = '/'+'/'.join(elem_stack)
                     if options.show_tree:
                         if self.tree and self.tree[-1][0] == elem_name:
                             self.tree[-1][1] += 1
