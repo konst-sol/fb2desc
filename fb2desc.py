@@ -559,6 +559,10 @@ def parse_args():
             codecs.lookup(options.charset)
         except LookupError as err:
             sys.exit(f'{parser.prog}: error: {err}')
+        if options.charset.lower() in ('utf-8', 'utf8'):
+            # utf-8-sig strips the BOM marker
+            options.charset = 'utf-8-sig'
+
     if options.zip_charset:
         try:
             codecs.lookup(options.zip_charset)
