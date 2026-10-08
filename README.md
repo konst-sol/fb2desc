@@ -12,8 +12,8 @@ A command-line utility for working with FB2 (FictionBook) files.
 - `-t, --tree` - Show XML tree
 - `-v, --cover` - Show cover
 - `-c, --charset <charset>` - Encoding for FB2 files
-- `-z, --zip-charset <charset>` - Encoding for filenames in ZIP archives
-- `-r, --replace` - Replace certain characters (quotation marks, etc.)
+- `-z, --zip-charset <charset>` - Encoding for filenames in ZIP archives. Use this option if filenames in the ZIP archive appear as garbled text
+- `-r, --replace` - Replace certain characters (quotation marks, etc.). Use this option for a terminal using 8-bit encoding
 - `-e, --elements <elements>` - Show only specified elements
 - `-R, --rename` - Rename mode
 - `-S, --slink` - Create softlinks instead of renaming
