@@ -17,7 +17,8 @@ import textwrap
 import re
 import traceback
 
-DEFAULT_COVER_IMAGE_VIEWER = 'feh'
+DEFAULT_COVER_IMAGE_VIEWER = 'feh' # or 'display'
+WRAP_WIDTH = 72
 
 def print_err(*args):
     print(*args, file=sys.stderr)
@@ -84,7 +85,6 @@ def translit(s):
     s = s.translate(trans_table)
     s = re.sub(r'[^a-z0-9]+', '_', s).strip('_')
     return s
-
 
 ##----------------------------------------------------------------------
 
@@ -233,7 +233,8 @@ class FB2Info:
         annotation = []
         ann = ''.join(ann).split('\n')
         for s in ann:
-            s = '\n'.join(textwrap.wrap(s, width=72, break_long_words=False,
+            s = '\n'.join(textwrap.wrap(s, width=WRAP_WIDTH,
+                                        break_long_words=False,
                                         initial_indent='  '))
             annotation.append(s)
         annotation = '\n'.join(annotation)
@@ -254,25 +255,25 @@ class FB2Info:
             return out
 
         elif format == 'pretty':
-            def add_col(name, value):
+            def add_row(name, value):
                 if value:
                     out.append(f'{name:<13}: {value}')
             out = []
-            add_col('File', self.filename)
-            add_col('Zip Filename', self.zip_filename)
-            add_col('Size', f'{self.file_size//1024} kb')
-            add_col('Encoding', self.encoding)
+            add_row('File', self.filename)
+            add_row('Zip Filename', self.zip_filename)
+            add_row('Size', f'{self.file_size//1024} kb')
+            add_row('Encoding', self.encoding)
 
-            add_col('Author(s)', authors)
-            add_col('Title', title)
-            add_col('Genres', ', '.join(genres))
+            add_row('Author(s)', authors)
+            add_row('Title', title)
+            add_row('Genres', ', '.join(genres))
             if sequence_name:
                 if sequence_number:
                     sequence = f'{sequence_name} ({sequence_number})'
                 else:
                     sequence = sequence_name
-                add_col('Sequence', sequence)
-            add_col('Annotation', annotation)
+                add_row('Sequence', sequence)
+            add_row('Annotation', annotation)
             out.append('')
             out = '\n'.join(out)
             if options.replace: out = replace_chars(out)
